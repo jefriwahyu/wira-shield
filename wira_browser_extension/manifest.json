@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "WIRA-SHIELD Web Guard",
-  "version": "1.0.0",
-  "description": "Universal Web Click Interceptor — mencegah Silent Auto-Install (MITRE T1189) di semua situs. Demo defensif lokal, data hanya ke 127.0.0.1:5050.",
+  "version": "1.1.0",
+  "description": "Universal Web Click Interceptor — mencegah Silent Auto-Install (MITRE T1189) di semua situs, termasuk iklan dan iframe. Demo defensif lokal, data hanya ke 127.0.0.1:5050.",
   "permissions": ["storage", "activeTab"],
   "host_permissions": ["<all_urls>", "http://127.0.0.1:5050/*"],
   "background": {
@@ -13,7 +13,9 @@
       "matches": ["<all_urls>"],
       "js": ["content.js"],
       "run_at": "document_start",
-      "all_frames": false
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
     }
   ],
   "action": {
