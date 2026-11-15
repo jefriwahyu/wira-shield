@@ -1,32 +1,38 @@
 """
-WIRA-SHIELD — Modul 4: Dashboard Komando Interaktif (Streamlit)
-================================================================
+WIRA-SHIELD — Modul 4: Dashboard EDR (Endpoint Detection & Response)
+=====================================================================
 
-app.py adalah Command & Endpoint Protection Center untuk juri dan operator:
-- Simulasi layar aktivitas prajurit (portal web publik/instansi).
-- Radar intersepsi real-time (telemetri 01/05/09/12 ms).
-- Panel pembuktian forensik: installed_system_apps, brankas dokumen,
-  otorisasi PIN Komandan, dan tabel log security_logs.json.
+Produk EDR militer modern: tema gelap, kontras tajam, dua tab.
+- TAB 1: Endpoint Guard & Document Vault (Live System)
+- TAB 2: Threat Lab & Simulator (Red-Team Testing)
 
-Kontrak teknis: WIRA_SHIELD_SPEC.md Bagian 2 & 5 (Modul 4).
-Jalankan: streamlit run app.py
+Kontrak fungsi sandbox_setup.py, wira_engine.py, dan attack_simulator.py
+TIDAK diubah. Jalankan: streamlit run app.py
 """
 
+import html as html_lib
+import json
 import os
 import sys
+import urllib.request
 
-# Pastikan modul proyek (sandbox_setup, wira_engine, attack_simulator)
-# selalu dapat diimpor, baik dari lokal Windows/Linux maupun Streamlit Cloud.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
 
 from attack_simulator import trigger_attack
-from sandbox_setup import init_sandbox
-from wira_engine import get_system_status, unlock_vault
+from sandbox_setup import (
+    BASE_SANDBOX,
+    LOG_FILE,
+    STAGING_DIR,
+    VAULT_DIR,
+    init_sandbox,
+    is_safe_path,
+)
+from wira_engine import get_system_status, intercept_staging, lock_vault, unlock_vault
 
 # ---------------------------------------------------------------------------
-# Konstanta UI (label WAJIB identik dengan kontrak Modul 4)
+# Konstanta
 # ---------------------------------------------------------------------------
 DEVICE_PROFILES = [
     "Laptop Dinas Prajurit (Windows/Linux) - Full Process & Staging Guard",
@@ -35,64 +41,389 @@ DEVICE_PROFILES = [
 ]
 
 DEVICE_NOTES = {
-    DEVICE_PROFILES[0]: (
-        "Agen bekerja penuh: mengawasi staging browser, mencegah eksekusi "
-        "silent installer, dan mengunci brankas dokumen rahasia."
-    ),
-    DEVICE_PROFILES[1]: (
-        "Mobile Download & Staging Buffer Guard: paket .apk / script "
-        "eksploitasi disapu di ruang transit sebelum package installer HP memprosesnya."
-    ),
-    DEVICE_PROFILES[2]: (
-        "Config Integrity Guard: menjaga integritas direktori operasional "
-        "dan konfigurasi sistem kontrol satuan dari script otomatis penyusup."
-    ),
+    DEVICE_PROFILES[0]: "Full agent: staging guard + vault lock.",
+    DEVICE_PROFILES[1]: "Mobile Staging Buffer Guard (APK / script di transit).",
+    DEVICE_PROFILES[2]: "Config Integrity Guard untuk direktori OT / sensor.",
 }
 
-# Label tombol portal WAJIB identik dengan kontrak Modul 4.
-BTN_WATERING_HOLE = (
-    "Klik Unduh Pengumuman Resmi (Simulasi Watering Hole / Server Linux VPS Web Jebol)"
-)
-BTN_CLICKJACKING = (
-    "Klik Menu Navigasi Portal (Simulasi Clickjacking / Lapisan Iframe Transparan)"
-)
-BTN_MALVERTISING = (
-    "Klik Banner Iklan Promo (Simulasi Malvertising / Drive-By Download)"
-)
-BTN_ZERODAY = (
-    "Simulasikan Akses Paksa Zero-Day ke Folder Dokumen Rahasia (Trigger Honey-File)"
-)
+BTN_WH = "🚀 Jalankan Simulasi Watering Hole"
+BTN_CJ = "🚀 Jalankan Simulasi Clickjacking"
+BTN_MV = "🚀 Jalankan Simulasi Malvertising"
+BTN_ZD = "🚨 Picu Serangan Zero-Day Honeyfile"
 
-# Alur telemetri staging WAJIB identik dengan kontrak Modul 4.
+BRIDGE_URL = "http://127.0.0.1:5050"
+BRIDGE_STATUS_URL = f"{BRIDGE_URL}/status"
+
 TELEMETRY_STAGING = [
-    "[01 ms] Klik pengguna terdeteksi pada elemen web; browser menginisiasi silent background download.",
-    "[05 ms] Bibit installer mendarat di ruang transit (browser_temp_staging/).",
-    "[09 ms] WIRA-SHIELD Pre-Install Interceptor mendeteksi anomali unauthorized installer sebelum menyentuh sistem utama.",
-    "[12 ms] PROSES INSTALASI DIPUTUS PADA POSISI 0%! File bibit dihapus permanen dari ruang transit.",
+    "[01 ms] Klik / aktivitas browser terdeteksi; silent background download diinisiasi.",
+    "[05 ms] Bibit installer mendarat di browser_temp_staging/.",
+    "[09 ms] Pre-Install Interceptor mendeteksi unauthorized installer.",
+    "[12 ms] PROSES INSTALASI DIPUTUS PADA POSISI 0%! File bibit dihapus permanen.",
+]
+TELEMETRY_HONEYFILE = [
+    "[01 ms] Proses asing memindai dokumen_rahasia_tni/.",
+    "[05 ms] Honey-File _HONEYFILE_SANDI_OPERASI.txt tersentuh.",
+    "[09 ms] Auto-Vault Lock aktif — Fernet AES-128-CBC + HMAC.",
+    "[12 ms] SELURUH DOKUMEN RAHASIA TERKUNCI (.locked).",
 ]
 
-TELEMETRY_HONEYFILE = [
-    "[01 ms] Proses asing (zero-day) memindai folder dokumen_rahasia_tni/ di perangkat prajurit.",
-    "[05 ms] Honey-File _HONEYFILE_SANDI_OPERASI.txt tersentuh oleh pencuri data.",
-    "[09 ms] WIRA-SHIELD Auto-Vault Lock aktif — enkripsi Fernet (AES-128-CBC + HMAC).",
-    "[12 ms] SELURUH DOKUMEN RAHASIA TERKUNCI (.locked). Ciphertext tidak dapat dibaca peretas.",
-]
+CUSTOM_CSS = """
+<style>
+    /* ---------- Base ---------- */
+    .stApp {
+        background: linear-gradient(180deg, #0b0f19 0%, #0b1220 100%);
+        color: #f8fafc;
+    }
+    .stApp, .stApp * { color-scheme: dark; }
+    [data-testid="stHeader"] { background: transparent; }
+    #MainMenu, footer { visibility: hidden; }
+    h1, h2, h3, h4, h5, h6 { color: #f8fafc !important; }
+    p, span, li, label { color: #f8fafc; }
+    .stCaption, [data-testid="stCaptionContainer"] { color: #94a3b8 !important; }
+
+    /* ---------- Sidebar ---------- */
+    [data-testid="stSidebar"] {
+        background: #0b0f19;
+        border-right: 1px solid #334155;
+    }
+    [data-testid="stSidebar"] * { color: #e2e8f0; }
+
+    /* ---------- Tabs ---------- */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 6px;
+        background: #0b0f19;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 6px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        padding: 8px 14px;
+        color: #94a3b8 !important;
+        font-weight: 600;
+        font-size: 0.88rem;
+    }
+    .stTabs [aria-selected="true"] {
+        background: #064e3b !important;
+        color: #d1fae5 !important;
+        border: 1px solid #10b981;
+    }
+
+    /* ---------- Buttons ---------- */
+    .stButton > button {
+        width: 100%;
+        border-radius: 10px;
+        border: 1px solid #334155;
+        background: #111827;
+        color: #f8fafc !important;
+        font-weight: 600;
+        transition: all 0.15s ease;
+    }
+    .stButton > button:hover {
+        border-color: #10b981;
+        background: #0f1c2e;
+        box-shadow: 0 0 0 1px #10b981;
+    }
+    .stButton > button p { color: #f8fafc !important; }
+
+    /* ---------- Inputs (NO white boxes) ---------- */
+    .stTextInput input,
+    .stTextArea textarea {
+        background: #111827 !important;
+        border: 1px solid #334155 !important;
+        border-radius: 10px !important;
+        color: #f8fafc !important;
+    }
+    .stTextInput input::placeholder,
+    .stTextArea textarea::placeholder { color: #64748b !important; }
+
+    [data-testid="stSelectbox"] > div > div,
+    [data-baseweb="select"] > div {
+        background: #111827 !important;
+        border: 1px solid #334155 !important;
+        border-radius: 10px !important;
+        color: #f8fafc !important;
+    }
+    [data-baseweb="popover"] {
+        background: #111827 !important;
+        border: 1px solid #334155 !important;
+    }
+    [data-baseweb="popover"] * { color: #f8fafc !important; }
+
+    [data-testid="stFileUploader"],
+    [data-testid="stFileUploaderDropzone"] {
+        background: #111827 !important;
+        border: 1px dashed #334155 !important;
+        border-radius: 10px !important;
+        color: #f8fafc !important;
+    }
+    [data-testid="stFileUploader"] *,
+    [data-testid="stFileUploaderDropzone"] * { color: #f8fafc !important; }
+    [data-testid="stFileUploaderDropzone"] button {
+        background: #1e293b !important;
+        color: #f8fafc !important;
+        border: 1px solid #334155 !important;
+        border-radius: 8px !important;
+    }
+
+    [data-testid="stExpander"] {
+        border: 1px solid #334155 !important;
+        border-radius: 12px !important;
+        background: #111827 !important;
+    }
+    [data-testid="stExpander"] summary { color: #f8fafc !important; }
+    [data-testid="stForm"] {
+        background: #0f172a;
+        border: 1px solid #1e293b;
+        border-radius: 10px;
+        padding: 12px;
+    }
+
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        border-color: #334155 !important;
+        background: #0c121c !important;
+        border-radius: 14px !important;
+    }
+
+    [data-testid="stAlert"] {
+        background: #111827 !important;
+        border: 1px solid #334155 !important;
+        color: #f8fafc !important;
+        border-radius: 10px !important;
+    }
+    [data-testid="stAlert"] * { color: #f8fafc !important; }
+
+    [data-testid="stSpinner"] { color: #10b981 !important; }
+
+    /* ---------- Custom components ---------- */
+    .wira-title {
+        font-size: 1.35rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        color: #f8fafc;
+        margin: 0;
+        white-space: nowrap;
+    }
+    .wira-sub {
+        color: #6ee7b7;
+        font-size: 0.78rem;
+        font-weight: 600;
+        margin: 2px 0 0 0;
+    }
+    .wira-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        font-size: 0.74rem;
+        font-weight: 700;
+        border: 1px solid #14532d;
+        background: #052e16;
+        color: #4ade80;
+        white-space: nowrap;
+    }
+    .wira-badge.red {
+        border-color: #7f1d1d;
+        background: #450a0a;
+        color: #f87171;
+    }
+    .wira-badge.blue {
+        border-color: #1e40af;
+        background: #172554;
+        color: #93c5fd;
+    }
+    .wira-chip {
+        background: #1e293b;
+        color: #38bdf8;
+        padding: 3px 8px;
+        border-radius: 6px;
+        font-family: Consolas, "JetBrains Mono", monospace;
+        font-size: 0.82rem;
+        border: 1px solid #334155;
+        white-space: nowrap;
+    }
+
+    .wira-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+    }
+    @media (max-width: 820px) {
+        .wira-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    .wira-kpi {
+        background: linear-gradient(145deg, #111827, #1e293b);
+        border: 1px solid #334155;
+        border-left: 4px solid #10b981;
+        border-radius: 10px;
+        padding: 16px 16px 14px 16px;
+        min-width: 0;
+    }
+    .wira-kpi.danger { border-left-color: #ef4444; }
+    .wira-kpi-label {
+        font-size: 0.68rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: #6ee7b7;
+        font-weight: 700;
+    }
+    .wira-kpi.danger .wira-kpi-label { color: #fca5a5; }
+    .wira-kpi-value {
+        font-size: 1.25rem;
+        font-weight: 800;
+        color: #f8fafc;
+        margin: 8px 0 4px 0;
+        line-height: 1.15;
+        word-break: break-word;
+    }
+    .wira-kpi-sub {
+        font-size: 0.72rem;
+        color: #94a3b8;
+        font-weight: 500;
+    }
+
+    .wira-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        background: #0f172a;
+        border: 1px solid #1e293b;
+        border-radius: 8px;
+        padding: 8px 12px;
+        margin-bottom: 6px;
+    }
+    .wira-row-name {
+        color: #f8fafc;
+        font-family: Consolas, "JetBrains Mono", monospace;
+        font-size: 0.82rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .wira-pill {
+        padding: 2px 8px;
+        border-radius: 6px;
+        font-size: 0.68rem;
+        font-weight: 700;
+        border: 1px solid #14532d;
+        background: #052e16;
+        color: #4ade80;
+        white-space: nowrap;
+    }
+    .wira-pill.warn {
+        border-color: #78350f;
+        background: #451a03;
+        color: #fbbf24;
+    }
+    .wira-pill.red {
+        border-color: #7f1d1d;
+        background: #450a0a;
+        color: #f87171;
+    }
+
+    .wira-doc {
+        background: #0f172a;
+        border: 1px solid #1e293b;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 10px;
+    }
+    .wira-doc-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+    .wira-doc-name {
+        color: #f8fafc;
+        font-family: Consolas, monospace;
+        font-size: 0.85rem;
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .wira-doc-pre {
+        margin: 0;
+        padding: 8px 10px;
+        background: #060a10;
+        border: 1px solid #1e293b;
+        border-radius: 6px;
+        font-family: Consolas, "JetBrains Mono", monospace;
+        font-size: 0.78rem;
+        color: #94a3b8;
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 88px;
+        overflow: auto;
+    }
+    .wira-doc-pre.locked { color: #f87171; }
+
+    .wira-timeline {
+        font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+        font-size: 0.8rem;
+        line-height: 1.85;
+        color: #6ee7b7;
+        background: #060a10;
+        border: 1px solid #065f46;
+        border-radius: 12px;
+        padding: 12px 16px;
+        white-space: pre-wrap;
+    }
+
+    .wira-table-wrap {
+        overflow-x: auto;
+        border: 1px solid #334155;
+        border-radius: 10px;
+        background: #111827;
+    }
+    table.wira-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #111827;
+        font-size: 0.76rem;
+        min-width: 720px;
+    }
+    table.wira-table th {
+        background: #1e293b;
+        color: #f8fafc;
+        text-align: left;
+        padding: 9px 10px;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+    table.wira-table td {
+        padding: 8px 10px;
+        border-top: 1px solid #1e293b;
+        color: #e2e8f0;
+        vertical-align: top;
+    }
+    table.wira-table tr:hover td { background: #17255422; }
+    .wira-td-ok { color: #4ade80; font-weight: 600; }
+    .wira-td-bad { color: #f87171; font-weight: 600; }
+</style>
+"""
 
 
 # ---------------------------------------------------------------------------
-# Helper aplikasi
+# Session & helpers
 # ---------------------------------------------------------------------------
 def _init_session_state() -> None:
-    """Siapkan session state default (tahan error jika atribut hilang)."""
     st.session_state.setdefault("last_result", None)
     st.session_state.setdefault("last_scenario", None)
     st.session_state.setdefault("radar", None)
-    st.session_state.setdefault("flash", None)  # (kind, text) -> success|error|info
+    st.session_state.setdefault("flash", None)
     st.session_state.setdefault("app_error", None)
 
 
+def _esc(value) -> str:
+    return html_lib.escape(str(value if value is not None else ""))
+
+
 def _pop_flash() -> None:
-    """Tampilkan satu pesan flash lalu hapus agar tidak muncul dua kali."""
     flash = st.session_state.pop("flash", None)
     if not flash:
         return
@@ -106,42 +437,36 @@ def _pop_flash() -> None:
 
 
 def _telemetry_for(scenario: str) -> list:
-    """Pilih alur telemetri sesuai vektor serangan."""
     return TELEMETRY_HONEYFILE if scenario == "zeroday_honeyfile" else TELEMETRY_STAGING
 
 
 def _run_attack(scenario: str, device_profile: str) -> None:
-    """Jalankan trigger_attack, simpan hasil + radar, lalu refresh halaman."""
     try:
         result = trigger_attack(scenario, device_profile)
         st.session_state["last_result"] = result
         st.session_state["last_scenario"] = scenario
         st.session_state["radar"] = _telemetry_for(scenario)
         st.session_state["app_error"] = None
-    except Exception as exc:  # pragma: no cover - jaga UI tetap hidup
+    except Exception as exc:
         st.session_state["app_error"] = str(exc)
     st.rerun()
 
 
-def _reset_sandbox() -> None:
-    """Reset sandbox ke kondisi pabrik dan bersihkan radar."""
+def _reset_environment() -> None:
     try:
         init_sandbox()
         st.session_state["last_result"] = None
         st.session_state["last_scenario"] = None
         st.session_state["radar"] = None
         st.session_state["app_error"] = None
-        st.session_state["flash"] = (
-            "success",
-            "Sandbox Perangkat Prajurit berhasil direset ke kondisi awal.",
-        )
-    except Exception as exc:  # pragma: no cover
-        st.session_state["flash"] = ("error", f"Reset sandbox gagal: {exc}")
+        st.session_state["_seen_n"] = 0
+        st.session_state["flash"] = ("success", "Environment sandbox direset ke kondisi pabrik.")
+    except Exception as exc:
+        st.session_state["flash"] = ("error", f"Reset gagal: {exc}")
     st.rerun()
 
 
 def _unlock_vault(pin: str) -> None:
-    """Otorisasi Komandan: buka kunci brankas jika PIN valid."""
     try:
         result = unlock_vault(pin)
         if result.get("success"):
@@ -149,312 +474,648 @@ def _unlock_vault(pin: str) -> None:
         else:
             st.session_state["flash"] = ("error", result.get("message", "Otorisasi gagal."))
         st.session_state["app_error"] = None
-    except Exception as exc:  # pragma: no cover
-        st.session_state["flash"] = ("error", f"Pemulihan brankas gagal: {exc}")
+    except Exception as exc:
+        st.session_state["flash"] = ("error", f"Pemulihan gagal: {exc}")
     st.rerun()
 
 
-def _render_radar() -> None:
-    """Kolom kanan: alur telemetri pencegatan 01/05/09/12 ms."""
-    st.subheader("📡 Radar Intersepsi Real-Time WIRA-SHIELD")
-    st.caption("Telemetri waktu respons sejak klik prajurit (simulasi milidetik).")
-
-    radar = st.session_state.get("radar")
-    result = st.session_state.get("last_result")
-    if not radar or not result:
-        st.info(
-            "Belum ada aktivitas. Klik salah satu aksi di Kolom Kiri "
-            "(portal web publik) untuk melihat intersepsi live."
-        )
-        return
-
-    for line in radar:
-        if line.startswith("[12 ms]"):
-            st.markdown(f"**🚫 {line}**")
-        else:
-            st.markdown(f"`{line}`")
-
-    st.divider()
-    status = result.get("status")
-    if status == "BLOCKED_AT_STAGING":
-        files = ", ".join(result.get("files_removed", [])) or "-"
-        st.success(
-            f"**LAPIS 1 AKTIF — BLOCKED AT STAGING.** "
-            f"Payload `{files}` dihapus permanen. Instalasi diputus pada "
-            f"**{result.get('install_progress', '0%')} Installed** "
-            f"({result.get('latency_ms', 12)} ms). Sistem utama tetap bersih."
-        )
-        st.caption(f"Vektor: {result.get('attack_source', '-')} • Perangkat: {result.get('device_profile', '-')}")
-    elif status == "EMERGENCY_VAULT_LOCKED":
-        locked_count = result.get("locked_count", 0)
-        if locked_count:
-            st.error(
-                f"**LAPIS 2 AKTIF — EMERGENCY VAULT LOCKED.** "
-                f"{locked_count} dokumen rahasia dienkripsi Fernet (AES-128). "
-                f"Alasan: {result.get('reason', '-')}"
+def _lock_vault_now(device_profile: str) -> None:
+    try:
+        result = lock_vault("Kunci Darurat Manual dari Dashboard EDR", device_profile)
+        if result.get("vault_locked"):
+            st.session_state["flash"] = (
+                "success",
+                "Brankas terkunci ({} dokumen). Status: {}".format(
+                    result.get("locked_count", 0), result.get("status")
+                ),
             )
         else:
-            st.warning(
-                "**Brankas sudah terkunci.** Tidak ada file .txt baru yang terkunci "
-                "(honeyfile sebelumnya telah memicu Auto-Vault Lock). "
-                "Gunakan PIN Komandan untuk memulihkan dokumen."
-            )
-    else:
-        st.warning(f"Status tidak dikenal: {status}")
+            st.session_state["flash"] = ("error", "Gagal mengunci brankas.")
+        st.session_state["app_error"] = None
+    except Exception as exc:
+        st.session_state["flash"] = ("error", f"Lock gagal: {exc}")
+    st.rerun()
 
 
-def _render_portal(device_profile: str) -> None:
-    """Kolom kiri: simulasi layar aktivitas prajurit di portal web publik."""
-    st.subheader("🖥️ Simulasi Layar Aktivitas Prajurit")
-    st.caption("Portal Web Publik / Instansi — di luar kendali jaringan militer TNI AD.")
-
-    with st.container(border=True):
-        st.markdown("#### 🏛️ Portal Informasi Publik & Pengumuman Instansi")
-        st.markdown(
-            "Selamat datang di portal layanan publik. "
-            "Silakan akses pengumuman, menu navigasi, dan promo di bawah ini."
-        )
-        st.caption(
-            "Domain ini dianggap **sah** oleh URL blacklisting — padahal server "
-            "Linux VPS-nya dapat dijebol. Inilah celah Social Engineering."
-        )
-
-        st.markdown("**1. Unduh Pengumuman Resmi**")
-        st.caption(
-            "Watering Hole: peretas menjebol Linux VPS, menyuntikkan onClick "
-            "pada tombol resmi, lalu me-restart layanan. Bibit "
-            "`silent_rat_vps_exploit.pkg` meluncur diam-diam (Silent Auto-Install / T1189)."
-        )
-        if st.button(BTN_WATERING_HOLE, key="btn_watering_hole"):
-            _run_attack("watering_hole", device_profile)
-
-        st.markdown("**2. Menu Navigasi Portal**")
-        st.caption(
-            "Clickjacking / UI Redressing: iframe transparan menempel di atas "
-            "menu navigasi. Klik yang tampak sah mengunduh `transparent_menu_spyware.apk`."
-        )
-        if st.button(BTN_CLICKJACKING, key="btn_clickjacking"):
-            _run_attack("clickjacking", device_profile)
-
-        st.markdown("**3. Banner Iklan Promo**")
-        st.caption(
-            "Malvertising: exploit diselundupkan lewat jaringan iklan portal berita. "
-            "Klik tidak sengaja menjatuhkan `ad_banner_infostealer.exe` ke ruang transit."
-        )
-        if st.button(BTN_MALVERTISING, key="btn_malvertising"):
-            _run_attack("malvertising", device_profile)
-
-        st.markdown("**4. Darurat — Zero-Day ke Folder Rahasia**")
-        st.caption(
-            "Post-Exploitation: malware yang sudah berada di perangkat memindai "
-            "dokumen_rahasia_tni/ dan membaca honeyfile, memicu Auto-Vault Lock."
-        )
-        if st.button(BTN_ZERODAY, key="btn_zeroday"):
-            _run_attack("zeroday_honeyfile", device_profile)
-
-
-def _render_system_apps(installed_apps: list) -> None:
-    """Panel forensik kiri: bukti sistem utama tetap 0% malware."""
-    st.markdown("##### 🧬 Bukti Direktori Sistem — `installed_system_apps/`")
-    st.caption(
-        "Pembuktian untuk juri: `silent_rat_vps_exploit.pkg`, `transparent_menu_spyware.apk`, "
-        "dan `ad_banner_infostealer.exe` TIDAK PERNAH masuk ke sistem perangkat prajurit."
-    )
-    if not installed_apps:
-        st.warning("Folder sistem kosong.")
+def _add_vault_document(filename: str, content: str) -> None:
+    raw = (filename or "").strip()
+    name = os.path.basename(raw)
+    if not name:
+        st.session_state["flash"] = ("error", "Nama dokumen wajib diisi.")
+        st.rerun()
         return
-    for name in installed_apps:
-        st.markdown(f"✅ **`{name}`** — aplikasi resmi terverifikasi")
-    st.success("Malware ter-install di sistem: **0%** (100% diblokir di staging).")
-
-
-def _render_vault(vault_files: list, vault_previews: dict, is_vault_locked: bool) -> None:
-    """Panel forensik kanan: isi brankas live (teks asli vs ciphertext)."""
-    st.markdown("##### 🗄️ Isi Brankas Dokumen Rahasia — `dokumen_rahasia_tni/`")
-    if is_vault_locked:
-        st.error("Status: **TERKUNCI (AES-FERNET)** — hacker hanya melihat ciphertext acak.")
-    else:
-        st.success("Status: **TERBUKA (AKTIF)** — teks asli terbaca jelas.")
-
-    if not vault_files:
-        st.warning("Brankas kosong. Lakukan Reset Sandbox.")
+    if name != raw or "\\" in raw or "/" in raw:
+        st.session_state["flash"] = ("error", "Nama file tidak valid (jangan pakai path).")
+        st.rerun()
         return
-
-    for name in vault_files:
-        preview = vault_previews.get(name, "")
-        if name.endswith(".locked"):
-            st.markdown(f"🔒 **`{name}`** (ciphertext Fernet)")
-        elif name == "_HONEYFILE_SANDI_OPERASI.txt":
-            st.markdown(f"🍯 **`{name}`** (honeyfile — umpan jebakan)")
-        else:
-            st.markdown(f"📄 **`{name}`**")
-        st.code(preview if preview else "(kosong / tidak terbaca)", language="text")
-
-
-def _render_narrative() -> None:
-    """Konteks eksplisit Bagian 2 — wajib tampil di UI (aturan Modul 4 / Bagian 0.4)."""
-    with st.expander("📖 Konteks Operasi — Mengapa Firewall & Antivirus Biasa Gagal", expanded=False):
-        st.markdown(
-            """
-**Akar masalah: faktor manusia (Social Engineering).**  
-Pintu masuk paling rentan bukan firewall server pusat, melainkan perangkat prajurit
-yang dimanipulasi saat mengakses situs berita populer atau portal informasi publik.
-
-**Silent Auto-Install (Drive-By Compromise — MITRE ATT&CK T1189).**  
-Ketika prajurit mengklik elemen berbahaya, browser mengeksekusi pengunduhan dan
-pemasangan RAT/spyware **diam-diam tanpa notifikasi izin instalasi**, memberi
-peretas akses penuh untuk mencuri dokumen rahasia TNI AD.
-
-**Mengapa firewall & antivirus biasa gagal.**  
-TNI AD tidak memiliki kendali atas keamanan server website publik di luar jaringan
-militer. Jika situs resmi/terkenal disusupi dari sisi server, URL blacklisting tetap
-meloloskan trafik karena menganggap domain tersebut sah.
-
-**4 vektor yang disimulasikan:**  
-1. **Watering Hole** — pembobolan Linux VPS + injeksi `onClick` tombol "Unduh Pengumuman Resmi".  
-2. **Clickjacking** — iframe transparan di atas menu navigasi.  
-3. **Malvertising** — banner iklan beracun di portal berita nasional.  
-4. **Zero-Day Honeyfile** — pemindaian folder rahasia yang menyentuh `_HONEYFILE_SANDI_OPERASI.txt`.
-
-**Solusi WIRA-SHIELD (Defense-in-Depth 2 Lapis):**  
-- **Lapis 1 — Pre-Install Staging Interceptor:** setiap installer dari browser wajib
-  melewati `browser_temp_staging/`. Bibit gelap diputus pada **0% Installed** dan
-  dihapus permanen dalam hitungan milidetik.  
-- **Lapis 2 — Honey-File Trap & Auto-Vault Lock:** sentuhan pada honeyfile otomatis
-  mengenkripsi seluruh dokumen rahasia (Fernet AES-128-CBC + HMAC) menjadi `.locked`.
-  Brankas hanya terbuka dengan PIN Komandan.
-            """
-        )
-
-
-def _render_logs(logs: list) -> None:
-    """Tabel riwayat insiden dari security_logs.json."""
-    st.markdown("##### 🧾 Tabel Log Forensik — `security_logs.json`")
-    if not logs:
-        st.info("Belum ada insiden tercatat. Klik salah satu skenario serangan.")
+    if not name.lower().endswith(".txt"):
+        name += ".txt"
+    path = os.path.join(VAULT_DIR, name)
+    if not is_safe_path(path):
+        st.session_state["flash"] = ("error", "Path dokumen di luar sandbox — ditolak.")
+        st.rerun()
         return
     try:
-        st.dataframe(logs, hide_index=True)
-    except TypeError:
-        # Versi Streamlit lama tidak mendukung hide_index
-        st.dataframe(logs)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(content or "")
+        st.session_state["flash"] = ("success", "Dokumen " + name + " ditambahkan ke brankas.")
+    except OSError as exc:
+        st.session_state["flash"] = ("error", "Gagal menulis dokumen: " + str(exc))
+    st.rerun()
+
+
+def _process_manual_scan(uploaded, device_profile: str) -> None:
+    safe_name = os.path.basename(uploaded.name or "manual_upload.bin") or "manual_upload.bin"
+    dest = os.path.join(STAGING_DIR, safe_name)
+    if not is_safe_path(dest):
+        st.session_state["flash"] = ("error", "Path unduhan di luar sandbox — ditolak.")
+        st.rerun()
+        return
+    try:
+        with open(dest, "wb") as handle:
+            handle.write(uploaded.getvalue())
+        result = intercept_staging(device_profile, "Manual Scan: " + safe_name)
+        if os.path.exists(dest) and is_safe_path(dest):
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+        st.session_state["last_result"] = result
+        st.session_state["last_scenario"] = "manual_scan"
+        st.session_state["radar"] = TELEMETRY_STAGING
+        st.session_state["app_error"] = None
+        if result.get("intercepted"):
+            st.session_state["flash"] = (
+                "success",
+                "INTERCEPTED: "
+                + ", ".join(result.get("files_removed", []))
+                + " dihapus di 0% Installed.",
+            )
+        else:
+            st.session_state["flash"] = (
+                "info",
+                "File "
+                + safe_name
+                + " bukan installer mencurigakan. Tidak ada intersepsi (zero false-positive).",
+            )
+    except Exception as exc:
+        st.session_state["app_error"] = str(exc)
+    st.rerun()
+
+
+def _bridge_online() -> bool:
+    try:
+        with urllib.request.urlopen(BRIDGE_STATUS_URL, timeout=1):
+            return True
     except Exception:
-        st.table(logs)
-    st.caption(f"Total {len(logs)} entri. Entri terbaru berada di baris pertama.")
+        return False
+
+
+def _read_logs_fast() -> list:
+    """Baca security_logs.json tanpa membangun status lengkap (untuk polling)."""
+    try:
+        if not os.path.isfile(LOG_FILE):
+            return []
+        with open(LOG_FILE, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _result_from_log(entry: dict | None) -> dict | None:
+    """Ubah entri log terbaru menjadi struktur last_result untuk telemetri."""
+    if not entry:
+        return None
+    install = str(entry.get("install_status") or "")
+    action = str(entry.get("action") or "")
+    vector = str(entry.get("vector") or "")
+    install_u = install.upper()
+    action_u = action.upper()
+    vector_u = vector.upper()
+    # Urutan penting: UNLOCKED juga mengandung "LOCKED", BLOCKED juga mengandung "LOCKED".
+    if "UNLOCKED" in install_u or "RESTORE" in action_u or "Dipulihkan" in install:
+        return {
+            "status": "VAULT_RESTORED",
+            "device_profile": entry.get("device") or "-",
+            "attack_source": vector or "-",
+        }
+    if "VAULT LOCKED" in install_u or "VAULT TERKUNCI" in install_u:
+        return {
+            "status": "EMERGENCY_VAULT_LOCKED",
+            "reason": entry.get("vector") or entry.get("payload") or "-",
+            "device_profile": entry.get("device") or "-",
+            "attack_source": vector or "-",
+        }
+    if (
+        "0%" in install
+        or "BLOCKED" in install_u
+        or "INTERCEPT" in action_u
+        or "WEB CLICK" in vector_u
+        or "MANUAL SCAN" in vector_u
+    ):
+        payload = str(entry.get("payload") or "-")
+        files = [p.strip() for p in payload.split(",") if p.strip() and p.strip() != "-"]
+        return {
+            "status": "BLOCKED_AT_STAGING",
+            "files_removed": files,
+            "install_progress": "0%",
+            "latency_ms": entry.get("latency_ms", 12),
+            "attack_source": vector or "-",
+            "device_profile": entry.get("device") or "-",
+        }
+    return None
+
+
+@st.fragment(run_every=2)
+def _watch_incidents() -> None:
+    """Poll security_logs.json; jika jumlah insiden berubah, refresh seluruh app
+    agar klik Live Browser di situs nyata langsung terlihat di KPI & telemetri."""
+    logs = _read_logs_fast()
+    n = len(logs)
+    prev = st.session_state.get("_seen_n")
+    if prev is None:
+        st.session_state["_seen_n"] = n
+        return
+    if n == prev:
+        return
+    st.session_state["_seen_n"] = n
+    newest = _result_from_log(logs[0]) if logs else None
+    if newest:
+        st.session_state["last_result"] = newest
+        st.session_state["last_scenario"] = "live_watch"
+        st.session_state["radar"] = (
+            TELEMETRY_HONEYFILE
+            if newest.get("status") == "EMERGENCY_VAULT_LOCKED"
+            else TELEMETRY_STAGING
+        )
+    try:
+        st.rerun(scope="app")
+    except TypeError:
+        st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# HTML builders (tanpa st.metric / st.code / st.dataframe / inline backticks)
+# ---------------------------------------------------------------------------
+def _kpi_card(label: str, value: str, sub: str = "", danger: bool = False) -> str:
+    cls = "wira-kpi danger" if danger else "wira-kpi"
+    return (
+        '<div class="' + cls + '">'
+        '<div class="wira-kpi-label">' + _esc(label) + "</div>"
+        '<div class="wira-kpi-value">' + _esc(value) + "</div>"
+        '<div class="wira-kpi-sub">' + _esc(sub) + "</div>"
+        "</div>"
+    )
+
+
+def _render_kpis(is_vault_locked: bool, n_logs: int) -> None:
+    st.markdown(
+        '<div class="wira-kpi-grid">'
+        + _kpi_card(
+            "Status Proteksi",
+            "DARURAT" if is_vault_locked else "AKTIF (SIAGA)",
+            "Universal Web & Staging Guard",
+            danger=is_vault_locked,
+        )
+        + _kpi_card(
+            "Intersepsi Pre-Install",
+            "0% Installed",
+            "100% Blocked at Staging",
+        )
+        + _kpi_card(
+            "Brankas Dokumen TNI",
+            "TERKUNCI (AES)" if is_vault_locked else "TERBUKA",
+            "Fernet AES-128-CBC + HMAC",
+            danger=is_vault_locked,
+        )
+        + _kpi_card(
+            "Ancaman Digagalkan",
+            str(n_logs),
+            "security_logs.json",
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _file_row(name: str, badge: str, pill: str = "wira-pill", icon: str = "📄") -> str:
+    return (
+        '<div class="wira-row">'
+        '<span class="wira-row-name">' + icon + " " + _esc(name) + "</span>"
+        '<span class="' + pill + '">' + _esc(badge) + "</span>"
+        "</div>"
+    )
+
+
+def _doc_card(name: str, preview: str, locked: bool) -> str:
+    if name == "_HONEYFILE_SANDI_OPERASI.txt":
+        icon, tag = "🍯", "HONEYFILE"
+        pill_cls = "wira-pill warn"
+    elif locked:
+        icon, tag = "🔒", "TERENKRIPSI AES"
+        pill_cls = "wira-pill red"
+    else:
+        icon, tag = "📄", "TERBUKA"
+        pill_cls = "wira-pill"
+    pre_cls = "wira-doc-pre locked" if locked else "wira-doc-pre"
+    body = preview if preview else "(kosong)"
+    return (
+        '<div class="wira-doc">'
+        '<div class="wira-doc-head">'
+        '<span class="wira-doc-name">' + icon + " " + _esc(name) + "</span>"
+        '<span class="' + pill_cls + '">' + tag + "</span>"
+        "</div>"
+        '<pre class="' + pre_cls + '">' + _esc(body) + "</pre>"
+        "</div>"
+    )
+
+
+def _render_timeline(result: dict | None) -> None:
+    if not result:
+        st.markdown(
+            '<div class="wira-timeline">[ -- ] Menunggu aktivitas browser / staging…\n'
+            "Universal Web & Staging Guard ACTIVE. Belum ada ancaman.</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    status = result.get("status")
+    if status == "VAULT_RESTORED":
+        st.success("Brankas TERBUKA kembali — dokumen rahasia berhasil dipulihkan.")
+        return
+    if status == "EMERGENCY_VAULT_LOCKED":
+        lines = TELEMETRY_HONEYFILE
+        tail = "12ms: VAULT LOCKED (Fernet AES-128)"
+    else:
+        lines = TELEMETRY_STAGING
+        files = ", ".join(result.get("files_removed", [])) or "payload"
+        tail = "12ms: 0% INSTALLED (" + files + ")"
+
+    st.markdown(
+        "<div class='wira-timeline'>"
+        + "\n".join(lines)
+        + "\n────────────────────────────────────────"
+        + "\n[01ms -> 05ms -> 09ms -> "
+        + tail
+        + "\nVektor : "
+        + _esc(result.get("attack_source") or result.get("reason") or "-")
+        + "\nDevice : "
+        + _esc(result.get("device_profile") or "-")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if status == "BLOCKED_AT_STAGING":
+        st.success(
+            "LAPIS 1 AKTIF — BLOCKED AT STAGING. Instalasi diputus pada "
+            + str(result.get("install_progress", "0%"))
+            + " Installed ("
+            + str(result.get("latency_ms", 12))
+            + " ms). Sistem utama tetap bersih."
+        )
+    elif status == "EMERGENCY_VAULT_LOCKED":
+        st.error(
+            "LAPIS 2 AKTIF — EMERGENCY VAULT LOCKED. "
+            "Dokumen rahasia dienkripsi Fernet AES-128. Alasan: "
+            + str(result.get("reason", "-"))
+        )
+    else:
+        st.info("Status terakhir: " + str(status))
+
+
+def _render_logs_table(logs: list) -> None:
+    if not logs:
+        st.info("Belum ada insiden. Guard siaga, zero false-positive.")
+        return
+
+    rows = []
+    for entry in logs[:80]:
+        install = str(entry.get("install_status") or "")
+        if "LOCKED" in install.upper():
+            st_cls, st_txt = "wira-td-bad", install
+        elif "UNLOCKED" in install.upper() or "Restored" in install:
+            st_cls, st_txt = "wira-td-ok", install
+        elif "0%" in install or "Blocked" in install:
+            st_cls, st_txt = "wira-td-ok", install
+        else:
+            st_cls, st_txt = "", install
+        rows.append(
+            "<tr>"
+            "<td>" + _esc(entry.get("timestamp") or "-") + "</td>"
+            "<td>" + _esc(entry.get("device") or "-") + "</td>"
+            "<td>" + _esc(entry.get("vector") or "-") + "</td>"
+            "<td>" + _esc(entry.get("payload") or "-") + "</td>"
+            "<td>" + _esc(entry.get("action") or "-") + "</td>"
+            '<td class="' + st_cls + '">' + _esc(st_txt or "-") + "</td>"
+            "<td>" + _esc(entry.get("latency_ms") if entry.get("latency_ms") is not None else "-") + "</td>"
+            "</tr>"
+        )
+
+    st.markdown(
+        '<div class="wira-table-wrap"><table class="wira-table">'
+        "<thead><tr>"
+        "<th>Waktu</th><th>Perangkat</th><th>Vektor</th><th>Payload</th>"
+        "<th>Aksi</th><th>Status</th><th>Latensi (ms)</th>"
+        "</tr></thead>"
+        "<tbody>" + "".join(rows) + "</tbody>"
+        "</table></div>",
+        unsafe_allow_html=True,
+    )
+    st.caption("Menampilkan {} dari {} entri. Terbaru di baris pertama. Sumber: security_logs.json".format(min(len(logs), 80), len(logs)))
+
+
+def _chip(name: str) -> str:
+    return '<span class="wira-chip">' + _esc(name) + "</span>"
+
+
+# ---------------------------------------------------------------------------
+# Render: Tab 1
+# ---------------------------------------------------------------------------
+def _render_tab_endpoint(device_profile: str, status: dict) -> None:
+    st.markdown("### 📡 Real-Time Endpoint & Universal Web Telemetry")
+    st.caption("Pemantauan live folder browser_temp_staging dan installed_system_apps.")
+
+    left, right = st.columns([1.05, 1], gap="large")
+
+    with left:
+        with st.container(border=True):
+            st.markdown("##### 📂 Ruang Transit — browser_temp_staging")
+            staging = status.get("staging_files") or []
+            if staging:
+                st.warning(str(len(staging)) + " file menunggu di ruang transit.")
+                for name in staging:
+                    st.markdown(
+                        _file_row(name, "DI TRANSIT", pill="wira-pill warn", icon="📥"),
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.markdown(
+                    _file_row("KOSONG — tidak ada bibit installer", "AMAN", icon="🟢"),
+                    unsafe_allow_html=True,
+                )
+
+            st.markdown("##### 🧬 Sistem Utama — installed_system_apps")
+            installed = status.get("installed_apps") or []
+            if not installed:
+                st.markdown(_file_row("Kosong", "EMPTY", icon="⚪"), unsafe_allow_html=True)
+            else:
+                for name in installed:
+                    st.markdown(
+                        _file_row(name, "TERVERIFIKASI", icon="✅"),
+                        unsafe_allow_html=True,
+                    )
+            st.success("Malware ter-install di sistem: 0% (100% Blocked at Staging).")
+
+            st.markdown("##### 📂 Pindai File Unduhan Manual")
+            st.caption(
+                "Unggah file untuk diuji di ruang transit. Installer mencurigakan "
+                "(.exe .apk .pkg .bat .sh .py .bin) langsung di-intercept di 0%."
+            )
+            uploaded = st.file_uploader(
+                "📂 Pindai File Unduhan Manual",
+                label_visibility="collapsed",
+                key="manual_scan",
+            )
+            if uploaded is not None:
+                st.caption(uploaded.name + " • " + str(uploaded.size) + " bytes")
+                if st.button("🔎 Jalankan Intercept di Staging", key="btn_manual_scan"):
+                    _process_manual_scan(uploaded, device_profile)
+
+    with right:
+        with st.container(border=True):
+            st.markdown("##### 🗄️ Brankas Dokumen Rahasia TNI AD — Fernet AES-128")
+            locked = bool(status.get("is_vault_locked"))
+            if locked:
+                st.error("Status: TERKUNCI (AES) — hacker hanya melihat ciphertext.")
+            else:
+                st.success("Status: TERBUKA — teks asli terbaca jelas.")
+
+            vault_files = status.get("vault_files") or []
+            previews = status.get("vault_previews") or {}
+            if not vault_files:
+                st.warning("Brankas kosong. Gunakan Reset Environment.")
+            else:
+                for name in vault_files:
+                    st.markdown(
+                        _doc_card(name, previews.get(name, ""), name.endswith(".locked")),
+                        unsafe_allow_html=True,
+                    )
+
+            st.markdown("##### 🔐 Aksi Brankas")
+            if st.button("🔒 Kunci Darurat Brankas", key="btn_lock_now"):
+                _lock_vault_now(device_profile)
+            with st.expander("➕ Tambah Dokumen Rahasia"):
+                with st.form("form_add_doc", clear_on_submit=True):
+                    new_name = st.text_input("Nama file (otomatis .txt)")
+                    new_body = st.text_area("Isi dokumen", height=80)
+                    if st.form_submit_button("Simpan ke Brankas"):
+                        _add_vault_document(new_name, new_body)
+
+            st.markdown("##### 🔓 Otorisasi Komandan")
+            pin = st.text_input("PIN Komandan", type="password", key="pin_tab1")
+            if st.button("🔓 Buka Kunci Brankas", key="btn_unlock_tab1"):
+                if not pin:
+                    st.error("PIN wajib diisi.")
+                else:
+                    _unlock_vault(pin)
+
+    st.divider()
+    st.markdown("##### 🧾 Log Forensik Keamanan (High-Fidelity Alerts)")
+    _render_logs_table(status.get("logs") or [])
+
+
+def _render_tab_threat_lab(device_profile: str) -> None:
+    st.markdown("### 🧪 Threat Lab & Simulator (Red-Team Testing)")
+    st.caption(
+        "Vektor serangan terkendali untuk menguji Lapis 1 (Pre-Install Interceptor) "
+        "dan Lapis 2 (Honey-File Vault). Tidak ada malware sungguhan."
+    )
+
+    with st.expander("📖 MITRE ATT&CK T1189 — Drive-By Compromise & Silent Auto-Install"):
+        st.markdown(
+            """
+**T1189 — Drive-By Compromise.** Prajurit mengakses situs publik (portal berita / instansi).
+Klik pada tombol, menu, atau iklan yang telah disusupi memicu pengunduhan dan pemasangan
+RAT/spyware **tanpa notifikasi izin**. Firewall URL blacklisting gagal karena domain dianggap sah.
+
+| Vektor | Cerita | Payload |
+| --- | --- | --- |
+| Watering Hole | Linux VPS website dijebol, onClick tombol resmi disuntik | silent_rat_vps_exploit.pkg |
+| Clickjacking | Iframe transparan di atas menu navigasi | transparent_menu_spyware.apk |
+| Malvertising | Banner iklan portal berita nasional | ad_banner_infostealer.exe |
+| Zero-Day Honeyfile | Pemindaian folder rahasia menyentuh umpan | _HONEYFILE_SANDI_OPERASI.txt |
+
+**Lapis 1** memutus instalasi di staging (0% Installed).  
+**Lapis 2** mengunci brankas saat honeyfile tersentuh (Fernet AES-128).
+            """
+        )
+
+    st.markdown("#### Vektor Serangan Terkendali")
+    st.caption("Profil perangkat aktif: " + device_profile)
+
+    grid_l, grid_r = st.columns(2, gap="large")
+    with grid_l:
+        with st.container(border=True):
+            st.markdown("#### 🌊 Watering Hole")
+            st.caption("Pembobolan Linux VPS + injeksi onClick pada tombol unduh resmi. Payload: silent_rat_vps_exploit.pkg")
+            if st.button(BTN_WH, key="btn_wh"):
+                _run_attack("watering_hole", device_profile)
+        with st.container(border=True):
+            st.markdown("#### 📰 Malvertising")
+            st.caption("Drive-by download dari banner iklan portal berita. Payload: ad_banner_infostealer.exe")
+            if st.button(BTN_MV, key="btn_mv"):
+                _run_attack("malvertising", device_profile)
+    with grid_r:
+        with st.container(border=True):
+            st.markdown("#### 🎭 Clickjacking")
+            st.caption("UI redressing: iframe transparan di atas menu navigasi. Payload: transparent_menu_spyware.apk")
+            if st.button(BTN_CJ, key="btn_cj"):
+                _run_attack("clickjacking", device_profile)
+        with st.container(border=True):
+            st.markdown("#### 🍯 Zero-Day Honeyfile")
+            st.caption("Akses paksa ke folder dokumen rahasia — trigger Auto-Vault Lock.")
+            if st.button(BTN_ZD, key="btn_zd"):
+                _run_attack("zeroday_honeyfile", device_profile)
+
+    st.divider()
+    st.markdown("#### 🌐 Live Browser Guard — Uji Klik di Situs Web Mana Saja")
+    st.markdown(
+        """
+Ikuti 3 langkah agar klik nyata di Chrome/Edge (semua situs HTTPS/HTTP) terpantau:
+
+1. **Jalankan bridge lokal** (terminal terpisah):
+
+   python wira_live_bridge.py
+
+   Bridge mendengar di 127.0.0.1:5050. Klik aman TIDAK menulis log (zero false-positive).  
+   Klik ke localhost / 127.0.0.1 (dashboard ini) otomatis diabaikan.
+
+2. **Pasang ekstensi** (Chrome/Edge):
+
+   Buka chrome://extensions (atau edge://extensions) → Developer mode → Load unpacked → folder wira_browser_extension.  
+   Pin 🛡️ WIRA-SHIELD Web Guard ke toolbar.
+
+3. **Uji klik di situs mana pun** (mis. detik.com, kompas.com):
+
+   Toggle 🧪 Mode Uji Serangan di popup ekstensi untuk menyimulasikan komponen tersusupi.  
+   Klik tautan/menu/iklan. Jika BLOCKED, muncul toast WIRA-SHIELD INTERCEPTED (0% INSTALLED)  
+   dan instalasi diputus di staging. Klik biasa (toggle mati, href bukan installer) → CLEAN, tanpa alarm palsu.
+        """
+    )
+
+    with st.expander("🔐 Kredensial Uji"):
+        st.markdown(
+            'PIN Komandan: <span class="wira-chip">TNIAD2026</span>',
+            unsafe_allow_html=True,
+        )
+        st.caption("Gunakan PIN ini pada form Otorisasi di Tab 1 setelah memicu Zero-Day Honeyfile.")
 
 
 # ---------------------------------------------------------------------------
 # Halaman utama
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="WIRA-SHIELD Command Center",
+    page_title="WIRA-SHIELD EDR",
     layout="wide",
     page_icon="🛡️",
+    initial_sidebar_state="expanded",
 )
-
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 _init_session_state()
+_watch_incidents()
 
-# --- Sidebar: pemilih perangkat & reset (kontrak poin 1) ---
+# --- Sidebar ---
 with st.sidebar:
-    st.markdown("## 🛡️ WIRA-SHIELD")
-    st.caption("Kartika Cyber Hackathon 2026 • Kategori 02 — Defensive Shield")
+    st.markdown("## 🛡️ WIRA-SHIELD EDR")
+    st.markdown(
+        '<span class="wira-badge">🟢 Universal Web & Staging Guard: ACTIVE</span>',
+        unsafe_allow_html=True,
+    )
+    st.caption("Kategori 02 — Defensive Shield")
     st.divider()
 
-    device_profile = st.selectbox("Profil Perangkat Prajurit", DEVICE_PROFILES)
+    device_profile = st.selectbox("Profil Perangkat", DEVICE_PROFILES)
     st.caption(DEVICE_NOTES.get(device_profile, ""))
     st.divider()
 
-    if st.button("♻️ Reset Sandbox ke Kondisi Awal"):
-        _reset_sandbox()
-    st.caption(
-        "Reset mengosongkan staging & brankas, memulihkan 2 aplikasi resmi, "
-        "3 dokumen rahasia + honeyfile, kunci Fernet baru, dan log kosong."
-    )
-    st.divider()
-    st.markdown("**Kredensial Uji Juri**")
-    st.code("PIN Komandan: TNIAD2026", language="text")
-    st.caption("Gunakan PIN ini pada form Otorisasi Komandan setelah Tombol 4 (Zero-Day).")
+    if st.button("🔄 Sync / Refresh Telemetry"):
+        st.rerun()
+    if st.button("♻️ Reset Environment"):
+        _reset_environment()
 
-# --- Header utama (kontrak poin 1) ---
-st.title("WIRA-SHIELD // Command & Endpoint Protection Center")
-st.subheader(
-    "Sistem Proteksi Perangkat Prajurit: Pre-Install Malware Interceptor "
-    "(0% Installed) & Automated Document Vault Lock — Kategori 02: Defensive Shield"
+    st.divider()
+    if _bridge_online():
+        st.markdown('<span class="wira-badge">🟢 Live Bridge: ONLINE</span>', unsafe_allow_html=True)
+        st.caption("wira_live_bridge.py @ 127.0.0.1:5050")
+    else:
+        st.markdown('<span class="wira-badge red">🔴 Live Bridge: OFFLINE</span>', unsafe_allow_html=True)
+        st.caption("Jalankan: python wira_live_bridge.py")
+    st.markdown(
+        "Sandbox: " + _chip(BASE_SANDBOX),
+        unsafe_allow_html=True,
+    )
+
+# --- Header ringkas satu baris ---
+st.markdown(
+    '<div style="display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; padding:2px 0 8px 0;">'
+    "<div>"
+    '<div class="wira-title">🛡️ WIRA-SHIELD EDR</div>'
+    '<div class="wira-sub">Endpoint Detection & Response — Pre-Install Interceptor (0% Installed) & Document Vault Lock</div>'
+    "</div>"
+    '<div style="display:flex; gap:8px; flex-wrap:wrap;">'
+    '<span class="wira-badge">🟢 Staging Guard: ACTIVE</span>'
+    '<span class="wira-badge blue">Kategori 02 — Defensive Shield</span>'
+    "</div>"
+    "</div>",
+    unsafe_allow_html=True,
 )
 _pop_flash()
 
 app_error = st.session_state.pop("app_error", None)
 if app_error:
-    st.error(f"Terjadi kesalahan tak terduga: {app_error}")
+    st.error("Kesalahan tak terduga: " + str(app_error))
 
-_render_narrative()
-st.divider()
-
-# --- Status live (auto-init jika sandbox belum ada) ---
 try:
     status = get_system_status()
 except Exception as exc:
-    st.error(f"Gagal membaca status sandbox: {exc}")
+    st.error("Gagal membaca telemetri sandbox: " + str(exc))
     st.stop()
 
 is_vault_locked = bool(status.get("is_vault_locked"))
 logs = status.get("logs") or []
 
-# --- Baris metrik utama: 4 kolom (kontrak poin 2) ---
-m1, m2, m3, m4 = st.columns(4)
-m1.metric(
-    "Status Perangkat",
-    "DARURAT (VAULT TERKUNCI)" if is_vault_locked else "AMAN (TERLINDUNGI)",
-)
-m2.metric(
-    "Malware Ter-install di Sistem",
-    "0%",
-    delta="100% Blocked at Staging",
-    delta_color="off",
-)
-m3.metric(
-    "Status Brankas Dokumen TNI",
-    "TERKUNCI (AES-FERNET)" if is_vault_locked else "TERBUKA (AKTIF)",
-)
-m4.metric("Total Insiden Digagalkan", str(len(logs)))
-
-st.divider()
-
-# --- Area utama 2 kolom (kontrak poin 3) ---
-col_left, col_right = st.columns(2)
-with col_left:
-    _render_portal(device_profile)
-with col_right:
-    _render_radar()
-
-st.divider()
-
-# --- Panel pembuktian forensik (kontrak poin 4) ---
-st.subheader("🔬 Panel Pembuktian Forensik & Brankas Dokumen")
-forensic_left, forensic_right = st.columns(2)
-with forensic_left:
-    _render_system_apps(status.get("installed_apps") or [])
-with forensic_right:
-    _render_vault(
-        status.get("vault_files") or [],
-        status.get("vault_previews") or {},
-        is_vault_locked,
+# Hidupkan telemetri dari log terbaru (mis. klik Live Browser di situs nyata)
+# bila session last_result masih kosong / lebih tua dari log teratas.
+last_from_log = _result_from_log(logs[0]) if logs else None
+if last_from_log:
+    st.session_state["last_result"] = last_from_log
+    st.session_state["radar"] = (
+        TELEMETRY_HONEYFILE
+        if last_from_log.get("status") == "EMERGENCY_VAULT_LOCKED"
+        else TELEMETRY_STAGING
     )
 
-st.markdown("##### 🔐 Form Otorisasi Komandan")
-st.caption("Brankas hanya dapat dipulihkan oleh Komandan. PIN default pengujian: TNIAD2026.")
-pin = st.text_input("Masukkan PIN Komandan (Default: TNIAD2026)", type="password")
-if st.button("Buka Kunci Brankas"):
-    if not pin:
-        st.error("PIN Komandan wajib diisi.")
-    else:
-        _unlock_vault(pin)
+_render_kpis(is_vault_locked, len(logs))
+
+# Telemetri SELALU tampil di atas tab agar klik Live Browser langsung terlihat
+# tanpa perlu pindah tab.
+st.markdown("##### Telemetri Insiden Terbaru")
+_render_timeline(st.session_state.get("last_result"))
 
 st.divider()
-_render_logs(logs)
+
+tab_endpoint, tab_lab = st.tabs(
+    [
+        "🛡️ Endpoint Guard & Document Vault (Live System)",
+        "🧪 Threat Lab & Simulator (Red-Team Testing)",
+    ]
+)
+with tab_endpoint:
+    _render_tab_endpoint(device_profile, status)
+with tab_lab:
+    _render_tab_threat_lab(device_profile)
 
 st.caption(
-    "WIRA-SHIELD (Waspada Intersepsi Runtime & Automated Shield) — "
-    "PUSSIBERAD TNI AD & CODEPOLITAN • Kartika Cyber Hackathon 2026. "
-    "Seluruh operasi file dikunci di ./sandbox_device_prajurit oleh is_safe_path()."
+    "Seluruh operasi file dikunci di sandbox oleh is_safe_path()."
 )

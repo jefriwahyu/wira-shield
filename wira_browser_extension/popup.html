@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WIRA-SHIELD Web Guard</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 300px;
+      padding: 16px;
+      background: linear-gradient(180deg, #070b11 0%, #0b1220 100%);
+      color: #e5edf6;
+      font: 500 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .logo { font-size: 22px; }
+    h1 {
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      color: #f8fafc;
+    }
+    .sub {
+      font-size: 11px;
+      color: #7dd3fc;
+      font-weight: 600;
+    }
+    .card {
+      background: #0f1722;
+      border: 1px solid #1e3048;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #4ade80;
+    }
+    .toggle-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .toggle-row input {
+      margin-top: 2px;
+      width: 16px;
+      height: 16px;
+      accent-color: #0ea5e9;
+      cursor: pointer;
+    }
+    .toggle-label {
+      font-size: 12px;
+      line-height: 1.45;
+      color: #cbd5e1;
+    }
+    .hint {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #64748b;
+    }
+    footer {
+      margin-top: 4px;
+      font-size: 10px;
+      color: #475569;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">🛡️</div>
+    <div>
+      <h1>WIRA-SHIELD Web Guard</h1>
+      <div class="sub">Universal Web & Staging Guard</div>
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="status" id="bridgeStatus">🟡 Memeriksa bridge…</div>
+  </div>
+
+  <div class="card">
+    <label class="toggle-row">
+      <input type="checkbox" id="simToggle" />
+      <span class="toggle-label">
+        🧪 Mode Uji Serangan: Simulasikan Komponen Web yang Diklik Mengandung Sisipan Exploit
+      </span>
+    </label>
+    <div class="hint">
+      ON  = setiap klik dianggap tersusupi → dicegat di 0% Installed.<br />
+      OFF = hanya tautan installer (.exe/.apk/.pkg/.bat/.sh/.msi/.scr) yang dicegat. Klik lain CLEAN, tanpa log.
+    </div>
+  </div>
+
+  <footer>
+    Local-only • 127.0.0.1:5050 • TANPA server internet<br />
+    WIRA-SHIELD EDR — Kategori 02 Defensive Shield
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
