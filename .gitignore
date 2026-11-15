@@ -1,0 +1,13 @@
+# WIRA-SHIELD — Git ignore (Modul 1)
+
+# Bytecode Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment & environment
+.venv/
+venv/
+.env
+
+# Lingkungan sandbox perangkat prajurit (dibuat otomatis oleh sandbox_setup.py)
+sandbox_device_prajurit/
